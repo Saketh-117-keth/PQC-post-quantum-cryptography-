@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Quantum Threat HUD</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --green: #00ff88;
+            --red: #ff2244;
+            --blue: #00cfff;
+            --dark: #050d12;
+            --amber: #ffb700;
+        }
+
+        html, body {
+            height: 100%; width: 100%;
+            overflow: hidden;
+            background: var(--dark);
+            color: var(--green);
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        /* ── SCANLINE OVERLAY ───────────────────────────── */
+        body::after {
+            content: '';
+            position: fixed; inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0,0,0,0.07) 2px,
+                rgba(0,0,0,0.07) 4px
+            );
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        /* ── CORNER BRACKETS ─────────────────────────────── */
+        .hud-frame {
+            position: fixed; inset: 10px;
+            pointer-events: none;
+            z-index: 100;
+        }
+        .hud-frame::before, .hud-frame::after,
+        .hud-frame .bl, .hud-frame .br {
+            content: '';
+            position: absolute;
+            width: 28px; height: 28px;
+            border-color: var(--green);
+            border-style: solid;
+            opacity: 0.7;
+        }
+        .hud-frame::before { top:0; left:0;  border-width: 2px 0 0 2px; }
+        .hud-frame::after  { top:0; right:0; border-width: 2px 2px 0 0; }
+        .hud-frame .bl     { bottom:0; left:0;  border-width: 0 0 2px 2px; }
+        .hud-frame .br     { bottom:0; right:0; border-width: 0 2px 2px 0; }
+
+        /* ── STANDBY SCREEN ──────────────────────────────── */
+        #standby {
+            position: fixed; inset: 0;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 14px;
+            padding: 20px;
+            transition: opacity 0.4s;
+        }
+        #standby.hidden { opacity: 0; pointer-events: none; }
+
+        .status-ring {
+            width: 70px; height: 70px;
+            border-radius: 50%;
+            border: 2px solid var(--green);
+            position: relative;
+            animation: spin 4s linear infinite;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .status-ring::before {
+            content: '';
+            position: absolute;
+            inset: 6px;
+            border-radius: 50%;
+            border: 1px solid rgba(0,255,136,0.3);
+        }
+        .status-ring-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 12px var(--green);
+            animation: pulse 1.6s ease-in-out infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+        .sys-label {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 9px;
+            letter-spacing: 4px;
+            color: rgba(0,255,136,0.5);
+            text-transform: uppercase;
+        }
+        .sys-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: var(--green);
+            text-align: center;
+        }
+
+        /* Permission Action Button */
+        .arm-btn {
+            background: rgba(0,255,136,0.12);
+            border: 1px solid var(--green);
+            color: var(--green);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            padding: 9px 18px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 0 10px rgba(0,255,136,0.2);
+            transition: all 0.2s ease;
+        }
+        .arm-btn:hover, .arm-btn:active {
+            background: var(--green);
+            color: var(--dark);
+            box-shadow: 0 0 20px var(--green);
+        }
+        .arm-btn.armed {
+            border-color: var(--blue);
+            color: var(--blue);
+            background: rgba(0,207,255,0.1);
+            box-shadow: 0 0 10px rgba(0,207,255,0.3);
+        }
+
+        /* Grid readouts */
+        .readouts {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            width: 290px;
+        }
+        .readout-box {
+            border: 1px solid rgba(0,255,136,0.2);
+            padding: 7px 9px;
+            background: rgba(0,255,136,0.03);
+        }
+        .readout-label { font-size: 8px; color: rgba(0,255,136,0.45); letter-spacing: 2px; text-transform: uppercase; }
+        .readout-val   { font-size: 16px; color: var(--green); margin-top: 2px; }
+        .readout-val.amber { color: var(--amber); }
+        .readout-val.blue  { color: var(--blue); }
+
+        /* Scrolling ticker */
+        .ticker-wrap {
+            width: 290px;
+            overflow: hidden;
+            border-top: 1px solid rgba(0,255,136,0.15);
+            border-bottom: 1px solid rgba(0,255,136,0.15);
+            padding: 4px 0;
+        }
+        .ticker {
+            display: inline-block;
+            white-space: nowrap;
+            font-size: 9px;
+            color: rgba(0,255,136,0.4);
+            letter-spacing: 1.5px;
+            animation: ticker 18s linear infinite;
+        }
+        @keyframes ticker { from{transform:translateX(290px)} to{transform:translateX(-100%)} }
+
+        /* ── ALERT SCREEN ────────────────────────────────── */
+        #alert {
+            position: fixed; inset: 0;
+            background: #0a0000;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 12px;
+            padding: 20px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+        #alert.active { opacity: 1; pointer-events: all; }
+
+        /* Red vignette flash */
+        #alert::before {
+            content: '';
+            position: fixed; inset: 0;
+            background: radial-gradient(ellipse at center, transparent 30%, rgba(255,20,50,0.55) 100%);
+            animation: vignette-pulse 0.8s ease-in-out infinite alternate;
+            pointer-events: none;
+        }
+        @keyframes vignette-pulse { from{opacity:0.6} to{opacity:1} }
+
+        /* Sweeping red line */
+        #alert::after {
+            content: '';
+            position: fixed;
+            left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--red), transparent);
+            animation: sweep 1.2s linear infinite;
+            pointer-events: none;
+        }
+        @keyframes sweep { from{top:0} to{top:100%} }
+
+        .threat-badge {
+            display: flex; align-items: center; gap: 8px;
+            padding: 5px 16px;
+            border: 1px solid rgba(255,34,68,0.4);
+            background: rgba(255,34,68,0.08);
+        }
+        .threat-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--red);
+            box-shadow: 0 0 8px var(--red);
+            animation: pulse 0.6s ease-in-out infinite;
+        }
+        .threat-badge-text {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 9px;
+            font-weight: 700;
+            color: var(--red);
+            letter-spacing: 3px;
+        }
+
+        .alert-sub {
+            font-size: 8px;
+            letter-spacing: 3px;
+            color: rgba(255,100,120,0.65);
+            text-transform: uppercase;
+        }
+
+        #dataset-name {
+            font-family: 'Orbitron', sans-serif;
+            font-size: clamp(16px, 5vw, 26px);
+            font-weight: 900;
+            color: #fff;
+            text-align: center;
+            text-shadow: 0 0 30px rgba(255,34,68,0.7);
+            letter-spacing: 1px;
+            padding: 0 15px;
+            animation: text-glitch 3s infinite;
+        }
+        @keyframes text-glitch {
+            0%,92%,100% { transform: none; text-shadow: 0 0 30px rgba(255,34,68,0.7); }
+            93% { transform: translateX(3px) skewX(-5deg); text-shadow: -3px 0 rgba(0,255,200,0.5), 3px 0 rgba(255,34,68,0.5); }
+            95% { transform: translateX(-2px); }
+            97% { transform: none; }
+        }
+
+        /* Alert readouts */
+        .alert-readouts {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+            width: 300px;
+        }
+        .alert-readout {
+            border: 1px solid rgba(255,34,68,0.25);
+            background: rgba(255,34,68,0.05);
+            padding: 6px 7px;
+            text-align: center;
+        }
+        .alert-readout-label { font-size: 7px; color: rgba(255,120,130,0.5); letter-spacing: 2px; text-transform: uppercase; }
+        .alert-readout-val   { font-size: 13px; color: var(--red); margin-top: 2px; }
+
+        .quantum-register {
+            font-size: 20px;
+            color: var(--amber);
+            letter-spacing: 6px;
+            text-shadow: 0 0 14px var(--amber);
+            font-weight: bold;
+            animation: flicker 0.15s infinite alternate;
+        }
+        @keyframes flicker { from{opacity:1} to{opacity:0.85} }
+
+        .factors {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 14px;
+            color: var(--red);
+            letter-spacing: 2px;
+        }
+
+        /* Divider */
+        .hud-divider {
+            width: 280px;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--red), transparent);
+            opacity: 0.4;
+        }
+        .hud-divider.green {
+            background: linear-gradient(90deg, transparent, var(--green), transparent);
+        }
+
+        /* Bottom status bar */
+        .status-bar {
+            position: fixed; bottom: 15px; left: 0; right: 0;
+            display: flex; justify-content: space-between;
+            padding: 0 20px;
+            font-size: 8px;
+            color: rgba(0,255,136,0.3);
+            letter-spacing: 1.5px;
+        }
+        .status-bar.red-bar { color: rgba(255,34,68,0.4); }
+
+        /* Top bar */
+        .top-bar {
+            position: fixed; top: 15px; left: 0; right: 0;
+            display: flex; justify-content: space-between;
+            padding: 0 20px;
+            font-size: 8px;
+            color: rgba(0,255,136,0.3);
+            letter-spacing: 1.5px;
+        }
+
+        /* Clock */
+        #clock { color: rgba(0,255,136,0.5); }
+        #alert-clock { color: rgba(255,34,68,0.5); }
+    </style>
+</head>
+<body>
+
+<!-- HUD Corner Frame -->
+<div class="hud-frame"><span class="bl"></span><span class="br"></span></div>
+
+<!-- Top status bar -->
+<div class="top-bar" id="top-bar">
+    <span>SYS-01 ▸ QUANTUM-BRIDGE</span>
+    <span id="clock">00:00:00</span>
+</div>
+
+<!-- ══ STANDBY SCREEN ═══════════════════════════════ -->
+<div id="standby">
+    <div class="sys-label">Quantum Security Command</div>
+
+    <div class="status-ring">
+        <div class="status-ring-dot"></div>
+    </div>
+
+    <div class="sys-title">INGRESS TAP ACTIVE</div>
+
+    <!-- ARM NOTIFICATIONS BUTTON -->
+    <button class="arm-btn" id="arm-btn" onclick="armPhoneSystem()">
+        <span>🔔</span> <span id="arm-btn-text">ARM PHONE NOTIFICATIONS</span>
+    </button>
+
+    <div class="hud-divider green"></div>
+
+    <div class="readouts">
+        <div class="readout-box">
+            <div class="readout-label">Packets</div>
+            <div class="readout-val" id="pkt-count">0</div>
+        </div>
+        <div class="readout-box">
+            <div class="readout-label">Threat Level</div>
+            <div class="readout-val amber" id="threat-lvl">LOW</div>
+        </div>
+        <div class="readout-box">
+            <div class="readout-label">Cipher Watch</div>
+            <div class="readout-val blue">RSA/ECC</div>
+        </div>
+        <div class="readout-box">
+            <div class="readout-label">PQC Gateway</div>
+            <div class="readout-val">READY</div>
+        </div>
+    </div>
+
+    <div class="ticker-wrap">
+        <span class="ticker">
+            MONITORING · RSA-2048 · ECC-P256 · ML-KEM-512 · ML-KEM-768 ·
+            SHOR CIRCUIT ARMED · HYBRID GATEWAY ARMED · AWAITING INTERCEPT ·
+        </span>
+    </div>
+
+    <div class="sys-label" style="font-size:7px; opacity:0.4; margin-top:2px;">WAITING FOR QUANTUM ATTACK EVENT</div>
+</div>
+
+<!-- ══ ALERT / HUD SCREEN ══════════════════════════ -->
+<div id="alert">
+
+    <div class="threat-badge">
+        <div class="threat-dot"></div>
+        <div class="threat-badge-text">CRITICAL THREAT DETECTED</div>
+    </div>
+
+    <div class="alert-sub">QUANTUM SHOR ATTACK — RSA COMPROMISED</div>
+
+    <div class="hud-divider"></div>
+
+    <div class="alert-sub" style="opacity:0.5;">TARGET DATASET UNDER ATTACK</div>
+    <div id="dataset-name">—</div>
+
+    <div class="hud-divider"></div>
+
+    <div class="alert-readouts">
+        <div class="alert-readout">
+            <div class="alert-readout-label">Register</div>
+            <div class="alert-readout-val" id="alert-phase">|----⟩</div>
+        </div>
+        <div class="alert-readout">
+            <div class="alert-readout-label">Period r</div>
+            <div class="alert-readout-val" id="alert-r">—</div>
+        </div>
+        <div class="alert-readout">
+            <div class="alert-readout-label">Factors</div>
+            <div class="alert-readout-val" id="alert-factors">—</div>
+        </div>
+    </div>
+
+    <div class="quantum-register" id="quantum-reg">|0000⟩</div>
+
+    <div class="factors" id="rsa-broken">RSA-2048 ▸ BROKEN</div>
+
+    <div class="hud-divider"></div>
+
+    <div class="alert-sub" style="color:rgba(0,207,255,0.6);">PQC GATEWAY ENGAGED — ML-KEM-768 + AES-256-GCM</div>
+
+    <div class="status-bar red-bar" id="alert-bot">
+        <span>BACKEND: <span id="backend-name">IBM QUANTUM</span></span>
+        <span id="alert-clock">00:00:00</span>
+    </div>
+</div>
+
+<!-- Bottom status bar (standby) -->
+<div class="status-bar" id="standby-bot">
+    <span>MODE: PASSIVE INTERCEPT</span>
+    <span>GATEWAY: ML-KEM-768</span>
+</div>
+
+<script>
+    // Register Service Worker for mobile notification support (Android/iOS)
+    let swReg = null;
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js')
+            .then(reg => { swReg = reg; console.log("SW registered"); })
+            .catch(err => console.log("SW registration error:", err));
+    }
+
+    const socket = io(window.location.origin);
+
+    // ── Clock ──────────────────────────────────────
+    function updateClock() {
+        const t = new Date().toLocaleTimeString('en-GB');
+        document.getElementById('clock').textContent = t;
+        document.getElementById('alert-clock').textContent = t;
+    }
+    setInterval(updateClock, 1000); updateClock();
+
+    // ── Packet counter (simulated on standby) ──────
+    let pktCount = 0;
+    setInterval(() => {
+        pktCount += Math.floor(Math.random() * 8) + 1;
+        document.getElementById('pkt-count').textContent = pktCount.toLocaleString();
+        const tl = ['LOW','MEDIUM','ELEVATED'];
+        document.getElementById('threat-lvl').textContent = tl[Math.min(Math.floor(pktCount/100), 2)];
+    }, 900);
+
+    // ── Audio Context & Sound Synthesizer ──────────
+    let audioCtx = null;
+    function initAudio() {
+        try {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        } catch(e) {}
+    }
+
+    function armPhoneSystem() {
+        initAudio();
+        // Request Notification Permission
+        if ('Notification' in window) {
+            Notification.requestPermission().then(permission => {
+                const btn = document.getElementById('arm-btn');
+                const btnText = document.getElementById('arm-btn-text');
+                if (permission === 'granted') {
+                    btn.classList.add('armed');
+                    btnText.textContent = 'PHONE ALERTS ARMED ✓';
+                    // Test vibration
+                    if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
+                } else {
+                    btnText.textContent = 'PERMISSION DENIED';
+                }
+            });
+        }
+    }
+
+    function playAlarm() {
+        try {
+            initAudio();
+            if (!audioCtx) return;
+            [0, 0.35, 0.7].forEach(offset => {
+                const osc = audioCtx.createOscillator();
+                const g   = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime + offset);
+                osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + offset + 0.3);
+                g.gain.setValueAtTime(0.3, audioCtx.currentTime + offset);
+                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + offset + 0.35);
+                osc.connect(g); g.connect(audioCtx.destination);
+                osc.start(audioCtx.currentTime + offset);
+                osc.stop(audioCtx.currentTime + offset + 0.4);
+            });
+        } catch(e) {}
+    }
+
+    // ── Quantum register animation ─────────────────
+    const BITS = ['0','1'];
+    let regInterval = null;
+    function animateRegister(finalBits) {
+        let i = 0;
+        clearInterval(regInterval);
+        regInterval = setInterval(() => {
+            const scrambled = finalBits.split('').map((b, idx) =>
+                i > idx * 4 ? b : BITS[Math.floor(Math.random()*2)]
+            ).join('');
+            document.getElementById('quantum-reg').textContent = `|${scrambled}⟩`;
+            if (++i > finalBits.length * 5) {
+                clearInterval(regInterval);
+                document.getElementById('quantum-reg').textContent = `|${finalBits}⟩`;
+            }
+        }, 60);
+    }
+
+    // ── Dispatch Phone Notification ────────────────
+    function dispatchPhoneNotification(title, body) {
+        const options = {
+            body: body,
+            icon: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
+            vibrate: [400, 150, 400, 150, 800],
+            tag: 'quantum-attack-alert',
+            requireInteraction: true,
+            renotify: true
+        };
+
+        // 1. Service Worker Notification (required on Android Chrome)
+        if (swReg && 'showNotification' in swReg) {
+            swReg.showNotification(title, options).catch(() => {
+                // Fallback
+                if ('Notification' in window && Notification.permission === 'granted') {
+                    try { new Notification(title, options); } catch(e) {}
+                }
+            });
+        } else if ('Notification' in window && Notification.permission === 'granted') {
+            try { new Notification(title, options); } catch(e) {}
+        }
+    }
+
+    // ── ATTACK ALERT event ─────────────────────────
+    socket.on('HNDL_ATTACK_ALERT', (data) => {
+        const dName = data.dataset_name || 'UNKNOWN DATASET';
+        document.getElementById('dataset-name').textContent = dName;
+        const bits = (data.phase || '0100').replace(/[|⟩]/g, '');
+        document.getElementById('alert-phase').textContent = `|${bits}⟩`;
+        document.getElementById('alert-r').textContent = data.r || '4';
+        document.getElementById('alert-factors').textContent = data.factors || '3×5';
+        document.getElementById('backend-name').textContent = (data.backend || 'IBM QUANTUM').toUpperCase();
+
+        // Switch screens
+        document.getElementById('standby').classList.add('hidden');
+        document.getElementById('standby-bot').style.display = 'none';
+        document.getElementById('alert').classList.add('active');
+
+        // Effects
+        animateRegister(bits);
+        playAlarm();
+        if ('vibrate' in navigator) navigator.vibrate([400, 150, 400, 150, 800]);
+
+        // Trigger phone notification banner
+        dispatchPhoneNotification('🚨 QUANTUM ATTACK DETECTED', `Target: ${dName}\nRSA Compromised by Shor Order-Finding.`);
+    });
+
+    // ── RESET event ────────────────────────────────
+    socket.on('RESET_STANDBY', () => {
+        clearInterval(regInterval);
+        document.getElementById('standby').classList.remove('hidden');
+        document.getElementById('standby-bot').style.display = '';
+        document.getElementById('alert').classList.remove('active');
+    });
+</script>
+</body>
+</html>

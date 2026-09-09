@@ -1,0 +1,16 @@
+dept,algo,key_len,sensitivity,public_exposure,records_at_risk,secrecy_years,priority
+State Meebhoomi Land Records API,RSA-2048,2048,5,1,1024000,30,2
+Municipal,hybrid-PQC,256,3,1,1669,24,1
+Banking (Core),ECC-P384,384,5,0,550,10,1
+Land Records,ECC-P384,384,5,1,626,19,2
+Defence Comms,RSA-3072,3072,3,0,9391,13,0
+Municipal,ECC-P256,256,5,0,6951,26,2
+Health (eHospital),RSA-3072,3072,3,1,6064,22,1
+DigiLocker,ECC-P256,256,3,1,2733,29,2
+Police Records,AES-256,256,4,0,17202,6,1
+Banking (Core),RSA-2048,2048,5,1,2771,9,2
+Tax/Finance,AES-256,256,1,1,7768,9,0
+DigiLocker,RSA-2048,2048,1,1,2286,10,1
+Defence Comms,hybrid-PQC,256,1,1,2113,11,0
+Land Records,RSA-2048,2048,1,1,2397,24,2
+State Treasury Banking Core,RSA-2048,2048,5,1,2500000,25,2
