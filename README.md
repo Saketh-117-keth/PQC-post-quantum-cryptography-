@@ -151,10 +151,10 @@ This prints something like:
  SYSTEM 1: QUANTUM ATTACK & CRYPTO-AGILITY SERVER
 ======================================================================
  Local Machine IP      : 192.168.x.x
- Mobile Display URL    : http://192.168.x.x:8080
- Trigger Endpoint      : http://192.168.x.x:8080/trigger
- Standby Reset URL     : http://192.168.x.x:8080/reset
- Health Check          : http://192.168.x.x:8080/health
+ Mobile Display URL    : http://10.65.179.101:8080
+ Trigger Endpoint      : http://192.168.29:8080/trigger
+ Standby Reset URL     : http://192.168.29:8080/reset
+ Health Check          : http://192.168.29:8080/health
 ======================================================================
 ```
 
